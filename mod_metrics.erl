@@ -19,15 +19,33 @@
 -mod_description("Stores metrics in Postgres, and lets the db handle downsampling and expiration").
 -mod_prio(1000).
 
+-include_lib("zotonic.hrl").
+
 -export([
     init/1
 ]).
 
 init(Context) ->
+    ok = ensure_tables(Context),
+    ok = start_reporter(Context),
+    ok.
+
+%% How to figure out which metrics to listen to?
+
+start_reporter(Context) ->
+    ok = exometer_report:add_reporter(
+           z_utils:name_for_host(?MODULE, Context),
+           [{module, exometer_report_mod_metrics},
+            {status, enabled},
+            {context, Context}
+           ]
+          ),
+    ok.
+    
+ensure_tables(Context) ->
     case z_db:table_exists(metrics, Context) of
         true -> ok;
-        false ->
-            install_metric_table(Context)
+        false -> install_metric_table(Context)
     end.
 
 install_metric_table(Context) ->
@@ -45,9 +63,4 @@ install_metric_table(Context) ->
     ", Context),
 
     ok.
-
-
-
-
-
 
