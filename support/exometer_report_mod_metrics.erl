@@ -5,14 +5,19 @@
 
 -export([
     exometer_init/1,
-    exometer_info/2,
-    exometer_cast/2,
+
     exometer_call/3,
+    exometer_cast/2,
+    exometer_info/2,
+
     exometer_report/5,
     exometer_report_bulk/3,
+
     exometer_subscribe/5,
     exometer_unsubscribe/4,
+
     exometer_newentry/2,
+
     exometer_setopts/4,
     exometer_terminate/2
 ]).
@@ -25,15 +30,20 @@
  }).
 
 exometer_init(Options) ->
+    ?DEBUG(Options),
     {context, Context} = proplists:lookup(context, Options),
     {ok, #state{context=Context}}.
 
 exometer_report(_Metric, _DataPoint, _Extra, _Value, State) ->
-    ?DEBUG({report, _Metric, _DataPoint, _Extra, _Value}),
+    %?DEBUG({report, _Metric, _DataPoint, _Extra, _Value}),
     {ok, State}.
 
-exometer_report_bulk(_Found, _Extra, State) ->
-    ?DEBUG({report_bulk, _Found, _Extra}),
+exometer_report_bulk(Found, _Extra, State) ->
+
+    % ?DEBUG({report_bulk, Found}),
+
+    % Query = insert_query(Found, []),
+
     {ok, State}.
 
 exometer_subscribe(_Metric, _DataPoint, _Interval, _SubscribeOpts, State) ->
@@ -68,5 +78,15 @@ exometer_terminate(_Reason, _State) ->
     ?DEBUG({terminate, _Reason}),
     ok.
 
+
+%%
+%% Helpers
+%%
+
+insert_query([], Acc) ->
+    lists:reverse(Acc);
+insert_query([{[_,_|Metric], DataPoints}|Rest], Acc) ->
+    ?DEBUG(jiffy:encode(Metric)),
+    ?DEBUG(DataPoints).
 
 

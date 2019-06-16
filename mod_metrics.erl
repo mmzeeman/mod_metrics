@@ -22,45 +22,101 @@
 -include_lib("zotonic.hrl").
 
 -export([
-    init/1
+    init/1,
+
+    install_tables/1
 ]).
 
 init(Context) ->
     ok = ensure_tables(Context),
     ok = start_reporter(Context),
+
+    %% 
+    %%
+    %?DEBUG(exometer_report:subscribe(
+    %         reporter_name(Context),
+    %         [zotonic, z_context:site(Context), db, duration],
+    %         [n, min, max, median],
+    %         10000)),
+
+    %% All histograms
+
+    Site = z_context:site(Context),
+
+    ok = exometer_report:subscribe(
+             reporter_name(Context),
+             {select, 
+              [{ {[zotonic, Site| '_'], histogram, enabled}, [], ['$_'] }]},
+             datapoints(histogram),
+             10000),
+
+    ok = exometer_report:subscribe(
+             reporter_name(Context),
+             {select, 
+              [{ {[zotonic, Site| '_'], gauge, enabled}, [], ['$_'] }]},
+             datapoints(gauge),
+             10000),
+
     ok.
 
 %% How to figure out which metrics to listen to?
 
 start_reporter(Context) ->
-    ok = exometer_report:add_reporter(
-           z_utils:name_for_host(?MODULE, Context),
-           [{module, exometer_report_mod_metrics},
+    case exometer_report:add_reporter(
+           reporter_name(Context),
+           [{report_bulk, true},
+            {module, exometer_report_mod_metrics},
             {status, enabled},
             {context, Context}
            ]
-          ),
-    ok.
+          ) of
+        ok -> ok;
+        {error, already_running} -> ok
+    end.
+
+reporter_name(Context) ->
+    z_utils:name_for_host(?MODULE, Context).
     
 ensure_tables(Context) ->
     case z_db:table_exists(metrics, Context) of
         true -> ok;
-        false -> install_metric_table(Context)
+        false -> install_tables(Context)
     end.
 
-install_metric_table(Context) ->
-    z_db:q("
-        CREATE TABLE metrics (
-           id SERIAL NOT NULL,
-           
-           rsc_id INTEGER NOT NULL,
 
-           timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
-           value INTEGER NOT NULL,
+install_tables(Context) ->
+    F = fun(Ctx) ->
+                z_db:q("
+                    CREATE TABLE metrics (
+                        id BIGSERIAL NOT NULL,
+                        created TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
 
-           constraint metrics_pkey primary key (id)
-           )
-    ", Context),
+                        CONSTRAINT metrics_pkey PRIMARY KEY (id)
+                    )", Ctx),
 
+                z_db:q("
+                    CREATE TABLE datapoint (
+                        report_id int NOT NULL,
+
+                        metric jsonb NOT NULL,
+                        datapoint jsonb NOT NULL,
+
+                        CONSTRAINT datapoint_pkey PRIMARY KEY (report_id, metric),
+                        CONSTRAINT fk_report_id FOREIGN KEY (report_id)
+                            REFERENCES metrics(id)
+                                ON DELETE CASCADE
+                                ON UPDATE CASCADE
+                    )", Ctx)
+        end,
+
+    ?DEBUG(z_db:transaction(F, Context)),
     ok.
 
+%%
+%% Helpers
+%%
+
+datapoints(counter) -> [value];
+datapoints(gauge) -> [value];
+datapoints(histogram) -> [mean, min, max, 50, 95, 99, 999];
+datapoints(meter) -> [count, one, five, fifteen, day, mean].
