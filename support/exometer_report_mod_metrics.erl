@@ -39,6 +39,16 @@ exometer_report(_Metric, _DataPoint, _Extra, _Value, State) ->
     {ok, State}.
 
 exometer_report_bulk(Found, _Extra, State) ->
+    Now = z_utils:now(),
+
+    T = fun(Ctx) ->
+                ReportId = z_db:equery("INSERT INTO metrics (created) VALUES (to_timestamp($1)) RETURNING id", [Now], Ctx),
+                [ z_db:q("INSERT INTO datapoint (report_id, metric, datapoint) VALUES ($1, $2, $3)",
+                         [ReportId, metric_json(Metric), datapoint_json(DataPoint, <<>>)], Ctx) || {Metric, DataPoint} <- Found],
+                {ok, ReportId}
+        end,
+
+    ?DEBUG(z_db:transaction(T, State#state.context)),
 
     % ?DEBUG({report_bulk, Found}),
 
@@ -78,15 +88,52 @@ exometer_terminate(_Reason, _State) ->
     ?DEBUG({terminate, _Reason}),
     ok.
 
-
 %%
 %% Helpers
 %%
 
-insert_query([], Acc) ->
-    lists:reverse(Acc);
-insert_query([{[_,_|Metric], DataPoints}|Rest], Acc) ->
-    ?DEBUG(jiffy:encode(Metric)),
-    ?DEBUG(DataPoints).
+metric_json(Metric) -> metric_json(Metric, <<>>).
+
+metric_json([], <<>>) -> <<"[]">>;
+metric_json([], <<Bin/binary>>) -> <<Bin/binary, $]>>;
+metric_json([P|Rest], <<>>) ->
+    M = json_escape(P),
+    metric_json(Rest, <<$[, $", M/binary, $">>);
+metric_json([P|Rest], <<Bin/binary>>) ->
+    M = json_escape(P),
+    metric_json(Rest, <<Bin/binary, $,, $", M/binary, $">>).
+
+datapoint_json([], <<>>) -> <<"{}">>;
+datapoint_json([], <<Acc/binary>>) -> <<Acc/binary, $}>>;
+datapoint_json([{_, _}=KV|Rest], <<>>) ->
+    KVBin = kv_json(KV),
+    datapoint_json(Rest, <<${, KVBin/binary>>);
+datapoint_json([{_, _}=KV|Rest], <<Acc/binary>>) ->
+    KVBin = kv_json(KV),
+    datapoint_json(Rest, <<Acc/binary, $,, KVBin/binary>>).
+
+kv_json({K, V}) when is_integer(K) andalso is_number(V) ->
+    JK = z_convert:to_binary(K),
+    JV = z_convert:to_binary(V),
+    <<$", JK/binary, $", $:, JV/binary>>;
+kv_json({K, V}) when is_atom(K) andalso is_number(V) ->
+    JK = json_escape(K),
+    JV = z_convert:to_binary(V),
+    <<$", JK/binary, $", $:, JV/binary>>.
+
+json_escape(Atom) when is_atom(Atom) -> json_escape(z_convert:to_binary(Atom), <<>>);
+json_escape(Bin) when is_binary(Bin) -> json_escape(Bin, <<>>).
+
+json_escape(<<>>, <<Acc/binary>>) -> Acc;
+json_escape(<<$", Rest/binary>>, <<Acc/binary>>) -> json_escape(Rest, <<Acc/binary, $", $\\>>);
+json_escape(<<$\\, Rest/binary>>, <<Acc/binary>>) -> json_escape(Rest, <<Acc/binary, $\\, $\\>>);
+json_escape(<<$/, Rest/binary>>, <<Acc/binary>>) -> json_escape(Rest, <<Acc/binary, $/, $\\>>);
+json_escape(<<$\b, Rest/binary>>, <<Acc/binary>>) -> json_escape(Rest, <<Acc/binary, $b, $\\>>);
+json_escape(<<$\f, Rest/binary>>, <<Acc/binary>>) -> json_escape(Rest, <<Acc/binary, $f, $\\>>);
+json_escape(<<$\n, Rest/binary>>, <<Acc/binary>>) -> json_escape(Rest, <<Acc/binary, $n, $\\>>);
+json_escape(<<$\r, Rest/binary>>, <<Acc/binary>>) -> json_escape(Rest, <<Acc/binary, $r, $\\>>);
+json_escape(<<$\t, Rest/binary>>, <<Acc/binary>>) -> json_escape(Rest, <<Acc/binary, $t, $\\>>);
+json_escape(<<C/utf8, Rest/binary>>, <<Acc/binary>>) -> json_escape(Rest, <<Acc/binary, C/utf8>>).
+ 
 
 
