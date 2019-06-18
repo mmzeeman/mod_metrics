@@ -26,6 +26,9 @@
 -include_lib("exometer_core/include/exometer.hrl").
 
 -record(state, {
+    last_timestamp,
+    last_report_id,
+
     context
  }).
 
@@ -42,19 +45,20 @@ exometer_report_bulk(Found, _Extra, State) ->
     Now = z_utils:now(),
 
     T = fun(Ctx) ->
-                ReportId = z_db:equery("INSERT INTO metrics (created) VALUES (to_timestamp($1)) RETURNING id", [Now], Ctx),
+                Id = case Now =:= State#state.last_timestamp of
+                    true ->
+                        State#state.last_report_id;
+                    false ->
+                        [{ReportId}] = z_db:q("INSERT INTO metrics (created) VALUES (to_timestamp($1)) RETURNING id", [Now], Ctx),
+                        ReportId
+                end,
                 [ z_db:q("INSERT INTO datapoint (report_id, metric, datapoint) VALUES ($1, $2, $3)",
-                         [ReportId, metric_json(Metric), datapoint_json(DataPoint, <<>>)], Ctx) || {Metric, DataPoint} <- Found],
-                {ok, ReportId}
-        end,
+                         [Id, metric_json(Metric), datapoint_json(DataPoint, <<>>)], Ctx) || {Metric, DataPoint} <- Found],
+                {ok, Id}
+    end,
 
-    ?DEBUG(z_db:transaction(T, State#state.context)),
-
-    % ?DEBUG({report_bulk, Found}),
-
-    % Query = insert_query(Found, []),
-
-    {ok, State}.
+    {ok, ReportId} = z_db:transaction(T, State#state.context),
+    {ok, State#state{last_report_id=ReportId, last_timestamp=Now}}.
 
 exometer_subscribe(_Metric, _DataPoint, _Interval, _SubscribeOpts, State) ->
     ?DEBUG({subscribe, _Metric, _DataPoint, _Interval, _SubscribeOpts}),
