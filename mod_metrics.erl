@@ -31,31 +31,14 @@ init(Context) ->
     ok = ensure_tables(Context),
     ok = start_reporter(Context),
 
-    %% 
-    %%
-    %?DEBUG(exometer_report:subscribe(
-    %         reporter_name(Context),
-    %         [zotonic, z_context:site(Context), db, duration],
-    %         [n, min, max, median],
-    %         10000)),
-
-    %% All histograms
-
     Site = z_context:site(Context),
 
-    ok = exometer_report:subscribe(
+    [ ok = exometer_report:subscribe(
              reporter_name(Context),
              {select, 
-              [{ {[zotonic, Site| '_'], histogram, enabled}, [], ['$_'] }]},
-             datapoints(histogram),
-             10000),
-
-    ok = exometer_report:subscribe(
-             reporter_name(Context),
-             {select, 
-              [{ {[zotonic, Site| '_'], gauge, enabled}, [], ['$_'] }]},
-             datapoints(gauge),
-             10000),
+              [{ {[zotonic, Site| '_'], DataPoint, enabled}, [], ['$_'] }]},
+             datapoints(DataPoint),
+             10000) || DataPoint <- datapoints()],
 
     ok.
 
@@ -78,7 +61,7 @@ reporter_name(Context) ->
     z_utils:name_for_host(?MODULE, Context).
     
 ensure_tables(Context) ->
-    case z_db:table_exists(metrics, Context) of
+    case z_db:table_exists(report, Context) of
         true -> ok;
         false -> install_tables(Context)
     end.
@@ -87,23 +70,38 @@ ensure_tables(Context) ->
 install_tables(Context) ->
     F = fun(Ctx) ->
                 z_db:q("
-                    CREATE TABLE metrics (
+                    CREATE TABLE report (
                         id BIGSERIAL NOT NULL,
                         created TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
 
-                        CONSTRAINT metrics_pkey PRIMARY KEY (id)
+                        CONSTRAINT report_pkey PRIMARY KEY (id)
+                    )", Ctx),
+
+                z_db:q("
+                    CREATE TABLE metric (
+                       id SERIAL NOT NULL,
+                       metric jsonb NOT NULL,
+                       type varchar(15),
+
+                       CONSTRAINT metric_pkey PRIMARY KEY (id)
                     )", Ctx),
 
                 z_db:q("
                     CREATE TABLE datapoint (
                         report_id int NOT NULL,
+                        metric_id int NOT NULL,
 
-                        metric jsonb NOT NULL,
                         datapoint jsonb NOT NULL,
 
-                        CONSTRAINT datapoint_pkey PRIMARY KEY (report_id, metric),
+                        CONSTRAINT datapoint_pkey PRIMARY KEY (report_id, metric_id),
+
+                        CONSTRAINT fk_metric_id FOREIGN KEY (metric_id)
+                            REFERENCES metric(id)
+                                ON DELETE CASCADE
+                                ON UPDATE CASCADE,
+
                         CONSTRAINT fk_report_id FOREIGN KEY (report_id)
-                            REFERENCES metrics(id)
+                            REFERENCES report(id)
                                 ON DELETE CASCADE
                                 ON UPDATE CASCADE
                     )", Ctx)
@@ -116,7 +114,10 @@ install_tables(Context) ->
 %% Helpers
 %%
 
-datapoints(counter) -> [value];
+datapoints() ->
+    [counter, gauge, histogram, meter].
+
+datapoints(counter) ->[value];
 datapoints(gauge) -> [value];
 datapoints(histogram) -> [mean, min, max, 50, 95, 99, 999];
 datapoints(meter) -> [count, one, five, fifteen, day, mean].
