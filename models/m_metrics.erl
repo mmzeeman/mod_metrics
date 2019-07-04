@@ -2,7 +2,16 @@
 
 -include_lib("zotonic.hrl").
 
+% Model exports
 -export([
+    m_find_value/3,
+    m_to_list/2,
+    m_value/2
+]).
+
+% Model api exports
+-export([
+    all_metrics/1,
     metric_id/2,
     ensure_metric_id/2,
 
@@ -14,8 +23,31 @@
 -define(MAXAGE_METRIC, 7200).
 
 %%
+%% Model exports
+%%
+
+m_find_value(all, #m{value=undefined}, Context) ->
+    all_metrics(Context);
+m_find_value(_, _M, _Context) ->
+    undefined.
+
+m_to_list(_, _Context) ->
+    [].
+
+m_value(_M, _Context) ->
+    undefined.
+
+
+%%
 %% Api
 %%
+
+all_metrics(Context) ->
+    F = fun() ->
+                z_db:q("select id, type, metric from metric", [], Context)
+        end,
+    z_depcache:memo(F, all_metrics, ?MAXAGE_METRIC, Context).
+
 
 new_report_id(Timestamp, Context) ->
     [{ReportId}] = z_db:q("INSERT INTO report (created) VALUES (to_timestamp($1)) RETURNING id", [Timestamp], Context),
@@ -37,6 +69,7 @@ ensure_metric_id(Metric, Context) ->
         undefined ->
             Id = insert_metric_id(Metric, Context),
             z_depcache:flush({metric_id, Metric}, Context),
+            z_depcache:flush(all_metrics, Context),
             Id;
         Id -> Id
     end.
@@ -61,15 +94,14 @@ insert_datapoint(ReportId, MetricId, DataPoint, Context) ->
            [ReportId, MetricId, JSON], Context),
     ok.
 
-
 %%
 %% Helpers
 %%
 
+%
 metric_json(Metric, #context{}=Context) -> metric_json(Metric, z_context:site(Context));
 metric_json([zotonic, Site|Metric], Site) when is_atom(Site) -> metric_json1(Metric, <<>>);
 metric_json(Metric, _Site) -> metric_json1(Metric, <<>>).
-
 
 metric_json1([], <<>>) -> <<"[]">>;
 metric_json1([], <<Bin/binary>>) -> <<Bin/binary, $]>>;
@@ -114,5 +146,4 @@ json_escape(<<$\r, Rest/binary>>, <<Acc/binary>>) -> json_escape(Rest, <<Acc/bin
 json_escape(<<$\t, Rest/binary>>, <<Acc/binary>>) -> json_escape(Rest, <<Acc/binary, $t, $\\>>);
 json_escape(<<C/utf8, Rest/binary>>, <<Acc/binary>>) -> json_escape(Rest, <<Acc/binary, C/utf8>>).
  
-
 

@@ -20,12 +20,24 @@
 -mod_prio(1000).
 
 -include_lib("zotonic.hrl").
+-include_lib("modules/mod_admin/include/admin_menu.hrl").
 
 -export([
     init/1,
 
-    install_tables/1
+    install_tables/1,
+
+    observe_admin_menu/3
 ]).
+
+observe_admin_menu(admin_menu, Acc, Context) ->
+    [
+     #menu_item{id=admin_metrics_,
+                parent=admin_system,
+                label=?__("Metrics", Context),
+                url={admin_metrics},
+                visiblecheck={acl, use, mod_metrics}}
+    | Acc].
 
 init(Context) ->
     ok = ensure_tables(Context),
@@ -33,6 +45,7 @@ init(Context) ->
 
     Site = z_context:site(Context),
 
+    %% Register to all datapoints of the site.
     [ ok = exometer_report:subscribe(
              reporter_name(Context),
              {select, 
@@ -115,9 +128,10 @@ install_tables(Context) ->
 %%
 
 datapoints() ->
-    [counter, gauge, histogram, meter].
+    [counter, spiral, gauge, histogram, meter].
 
 datapoints(counter) ->[value];
+datapoints(spiral) -> [count, one];
 datapoints(gauge) -> [value];
 datapoints(histogram) -> [mean, min, max, 50, 95, 99, 999];
 datapoints(meter) -> [count, one, five, fifteen, day, mean].

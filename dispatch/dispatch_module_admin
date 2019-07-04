@@ -1,0 +1,4 @@
+%% -*- mode: erlang -*-
+[
+  {admin_metrics, ["admin", "metrics"], controller_admin_metrics, [seo_noindex]}
+].
